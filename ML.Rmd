@@ -1,0 +1,1117 @@
+---
+title: "Machine Learning-Heart Risk"
+author: "Glen Lin"
+date: '2024-5-29'
+output: html_document
+---
+
+### Define function
+
+#### Confusion Matrix
+
+```{r message=FALSE, warning=FALSE}
+ draw_confusion_matrix <- function(cm) {
+
+  layout(matrix(c(1,1,2)))
+  par(mar=c(2,2,2,2))
+  plot(c(100, 345), c(300, 450), type = "n", xlab="", ylab="", xaxt='n', yaxt='n')
+  title('CONFUSION MATRIX', cex.main=2)
+
+  # create the matrix 
+  rect(150, 430, 240, 370, col='#678197')
+  text(195, 435, "Heart Attack Risk", cex=1.2)
+  rect(250, 430, 340, 370, col='#a2d2df')
+  text(295, 435, "Less Risk", cex=1.2)
+  text(125, 370, 'Predicted', cex=1.3, srt=90, font=2)
+  text(245, 450, 'Actual', cex=1.3, font=2)
+  rect(150, 305, 240, 365, col='#678197')
+  rect(250, 305, 340, 365, col='#a2d2df')
+  text(140, 400, "Heart Attack Risk", cex=1.2, srt=90)
+  text(140, 335, "Less Risk", cex=1.2, srt=90)
+
+  # add in the cm results 
+  res <- as.numeric(cm$table)
+  text(195, 400, res[4], cex=1.6, font=2, col='white')
+  text(195, 335, res[3], cex=1.6, font=2, col='white')
+  text(295, 400, res[2], cex=1.6, font=2, col='white')
+  text(295, 335, res[1], cex=1.6, font=2, col='white')
+
+  # add in the specifics 
+  plot(c(100, 0), c(100, 0), type = "n", xlab="", ylab="", main = "DETAILS", xaxt='n', yaxt='n')
+  text(10, 85, names(cm$byClass[1]), cex=1.2, font=2)
+  text(10, 70, round(as.numeric(cm$byClass[1]), 3), cex=1.2)
+  text(30, 85, names(cm$byClass[2]), cex=1.2, font=2)
+  text(30, 70, round(as.numeric(cm$byClass[2]), 3), cex=1.2)
+  text(50, 85, names(cm$byClass[5]), cex=1.2, font=2)
+  text(50, 70, round(as.numeric(cm$byClass[5]), 3), cex=1.2)
+  text(70, 85, names(cm$byClass[6]), cex=1.2, font=2)
+  text(70, 70, round(as.numeric(cm$byClass[6]), 3), cex=1.2)
+  text(90, 85, names(cm$byClass[7]), cex=1.2, font=2)
+  text(90, 70, round(as.numeric(cm$byClass[7]), 3), cex=1.2)
+
+  # add in the accuracy information 
+  text(30, 35, names(cm$overall[1]), cex=1.5, font=2)
+  text(30, 20, round(as.numeric(cm$overall[1]), 3), cex=1.4)
+}  
+
+```
+
+#### ROC Curve 
+
+```{r message=FALSE, warning=FALSE}
+specificity=function (actuals, predictedScores, threshold = 0.001) 
+{
+    predicted_dir <- ifelse(predictedScores < threshold, 0, 1)
+    actual_dir <- actuals
+    no_without_and_predicted_to_not_have_event <- sum(actual_dir != 
+        1 & predicted_dir != 1, na.rm = T)
+    no_without_event <- sum(actual_dir != 1, na.rm = T)
+    return(no_without_and_predicted_to_not_have_event/no_without_event)
+}
+sensitivity=function (actuals, predictedScores, threshold = 0.001) 
+{
+    predicted_dir <- ifelse(predictedScores < threshold, 0, 1)
+    actual_dir <- actuals
+    no_with_and_predicted_to_have_event <- sum(actual_dir == 
+        1 & predicted_dir == 1, na.rm = T)
+    no_with_event <- sum(actual_dir == 1, na.rm = T)
+    return(no_with_and_predicted_to_have_event/no_with_event)
+}
+AUROC=function (actuals, predictedScores) 
+{
+    numrow = length(seq(max(predictedScores, 1, na.rm = T), (min(predictedScores, 
+        0, na.rm = T) - 0.02), by = -0.02))
+    df <- as.data.frame(matrix(numeric(numrow * 2), ncol = 2))
+    names(df) <- c("One_minus_specificity", "sensitivity")
+    rowcount = 1
+    getFprTpr <- function(actuals, predictedScores, threshold = 0.001 ){
+        return(list(1 - specificity(actuals = actuals, predictedScores = predictedScores, 
+            threshold = threshold), sensitivity(actuals = actuals, 
+            predictedScores = predictedScores, threshold = threshold)))
+    }
+    for (threshold in seq(max(predictedScores, 1, na.rm = T), 
+        (min(predictedScores, 0, na.rm = T) - 0.02), by = -0.02)) {
+        df[rowcount, ] <- getFprTpr(actuals = actuals, predictedScores = predictedScores, 
+            threshold = threshold)
+        rowcount <- rowcount + 1
+    }
+    df <- data.frame(df, Threshold = seq(max(predictedScores, 
+        1, na.rm = T), (min(predictedScores, 0, na.rm = T) - 
+        0.02), by = -0.02))
+    auROC <- 0
+    for (point in c(2:nrow(df))) {
+        x1 <- df[point - 1, 1]
+        x2 <- df[point, 1]
+        y1 <- df[point - 1, 2]
+        y2 <- df[point, 2]
+        rect_x <- x2 - x1
+        rect_y <- y1
+        rect_area <- rect_x * rect_y
+        triangle_area <- rect_x * (y2 - y1) * 0.5
+        currArea <- rect_area + triangle_area
+        auROC <- auROC + currArea
+    }
+    totalArea <- (max(df[, 1]) * max(df[, 2]))
+    return(auROC/totalArea)
+}
+
+ROC.plot.rv<-function (actuals, predictedScores) 
+{
+    One_minus_specificity <- Threshold.show <- NULL
+    numrow = length(seq(max(predictedScores, 1, na.rm = T), (min(predictedScores, 
+        0, na.rm = T) - 0.02), by = -0.02))
+    df <- as.data.frame(matrix(numeric(numrow * 2), ncol = 2))
+    names(df) <- c("One_minus_specificity", "sensitivity")
+    rowcount = 1
+    getFprTpr <- function(actuals, predictedScores, threshold = 0.5) {
+        return(list(1 - specificity(actuals = actuals, predictedScores = predictedScores, 
+            threshold = threshold), sensitivity(actuals = actuals, 
+            predictedScores = predictedScores, threshold = threshold)))
+    }
+    for (threshold in seq(max(predictedScores, 1, na.rm = T), 
+        (min(predictedScores, 0, na.rm = T) - 0.02), by = -0.02)) {
+        df[rowcount, ] <- getFprTpr(actuals = actuals, predictedScores = predictedScores, 
+            threshold = threshold)
+        rowcount <- rowcount + 1
+    }
+    AREAROC <- AUROC(actuals = actuals, predictedScores = predictedScores)
+    df <- data.frame(df, Threshold = seq(max(predictedScores, 
+        1, na.rm = T), (min(predictedScores, 0, na.rm = T) - 
+        0.02), by = -0.02))
+    df$Threshold.show <- rep(NA, nrow(df))
+    for (rownum in c(2:nrow(df))) {
+        if (df[rownum, 1] != df[rownum - 1, 1] | df[rownum, 2] != 
+            df[rownum - 1, 2]) {
+            df$Threshold.show[rownum] <- df$Threshold[rownum]
+        }
+    }
+    bp <- ggplot(df, aes(One_minus_specificity, sensitivity, 
+        label = Threshold.show))
+    
+        print(bp + geom_ribbon(color = "#678197", fill = "#678197", 
+            aes(ymin = 0, ymax = sensitivity)) + labs(title = "ROC Curve", 
+            x = "False Positive Rate", y = "True Positive Rate") + 
+            annotate("text", label = paste("AUROC:", round(AREAROC, 
+                4)), x = 0.55, y = 0.35, colour = "white", size = 8) + 
+            theme(legend.position = "none", plot.title = element_text(size = 20, 
+                colour = "#a2d2df"), axis.title.x = element_text(size = 15, 
+                colour = "#a2d2df"), axis.title.y = element_text(size = 15, 
+                colour = "#a2d2df")) + coord_cartesian(xlim = c(0, 
+            1), ylim = c(0, 1)))
+    }
+   
+```
+
+### Library required packages
+
+```{r}
+library(ggplot2)
+library(ggrepel)
+library(caret)
+library(tidyr)
+library(MLmetrics) # log loss
+library(dplyr)
+library(viridis) # color
+library(latex2exp) # math equation
+```
+
+### Import data set
+
+```{r}
+data <- read.csv("/Volumes/Viv's 4T/Glen/Phd/AI/Final/heart.csv")
+```
+
+### Data Modification
+
+#### Change data type
+
+```{r}
+data <- data %>%
+  mutate(
+    sex = as.factor(sex),
+    cp = as.factor(cp),
+    fbs = as.factor(fbs),
+    restecg = as.factor(restecg),
+    exng = as.factor(exng),
+    slp = as.factor(slp),
+    caa = as.factor(caa),
+    thall = as.factor(thall),
+    output = as.factor(output)
+  )
+# str(data$sex) check data type
+```
+
+
+
+#### Check NA vakue
+
+```{r}
+sum(is.na(data))
+```
+
+### EDA
+
+#### Describe data
+
+```{r}
+library(skimr)
+#please try the following code by uncommenting it
+skim(data)
+```
+
+#### Summary data
+
+```{r}
+summary(data)
+```
+
+
+
+#### Numeric variables
+
+```{r}
+library(plyr)
+library(Rmisc)
+p1 <- ggplot(data, aes(x=	trtbps, fill=output))+
+  geom_histogram(binwidth = 10)+ 
+  theme_light() +
+  scale_fill_manual(values = c("#678197", 
+                                  "#a2d2df"))+
+  scale_x_continuous(name = "Resting blood pressure (in mm Hg)") +
+  scale_y_continuous(name = "Count") +
+    ggtitle("trtbps")+
+    theme(legend.position="top", plot.title = element_text(size=10, hjust = 0.5))
+
+p2 <- ggplot(data, aes(x=chol, fill=output))+
+  geom_histogram(binwidth = 10)+ 
+  theme_light() +
+  scale_fill_manual(values = c("#678197", 
+                                  "#a2d2df"))+
+   scale_x_continuous(name = "cholestoral in mg/dl fetched via BMI sensor") +
+  scale_y_continuous(name = "Count") +
+  ggtitle("chol")+
+  theme(legend.position="top", plot.title = element_text(size=10, hjust = 0.5))
+
+
+p3 <- ggplot(data, aes(x=thalachh, fill=output))+
+  geom_histogram(binwidth = 5)+ 
+  theme_light() +
+  scale_fill_manual(values = c("#678197", 
+                                  "#a2d2df"))+
+   scale_x_continuous(name = "maximum heart rate achieved") +
+  scale_y_continuous(name = "Count") +
+  ggtitle("thalachh")+
+  theme(legend.position="top", plot.title = element_text(size=10, hjust = 0.5))
+
+
+p4 <- ggplot(data, aes(x=age, fill=output))+
+  geom_histogram(binwidth = 5)+ 
+  theme_light() +
+  scale_fill_manual(values = c("#678197", 
+                                  "#a2d2df"))+
+  scale_x_continuous(name = "age") +
+  scale_y_continuous(name = "Count") +
+  ggtitle("age")+
+  theme(legend.position="top", plot.title = element_text(size=10, hjust = 0.5))
+
+
+Rmisc::multiplot( p1, p2, p3,p4, cols = 2)
+
+```
+
+##### Remove chol outlier
+
+```{r}
+max_chol_index <- which.max(data$chol)
+data<- data[-max_chol_index,]
+```
+
+```{r}
+male = nrow(data[data$sex == '1' & data$output=='1',])
+fe = nrow(data[data$sex == '0' & data$output=='1',])
+per1 = male/nrow(data[data$sex == '1',])
+per2 = fe/nrow(data[data$sex == '0',])
+p3 <- ggplot(data, aes(x=sex, fill = output)) +
+  geom_bar(stat = "count") +
+  theme_light() +
+  scale_fill_manual(values = c("#678197", 
+                                  "#a2d2df"))+
+                                    
+   geom_text(x=1, y=fe-10, label=paste(round(per2*100),'%'), color = 'white') +
+   geom_text(x=2, y=male-10, label=paste(round(per1*100),'%'), color = 'white')
+                                  
+          
+```
+
+#### Categorical variables
+
+```{r}
+
+# Function to create the bar plot with text annotations
+create_bar_plot <- function(data, categorical_var, output_var) {
+  # Get unique categories
+  unique_categories <- unique(data[[categorical_var]])
+  unique_categories <- factor(sort(as.character(unique_categories)))
+  # Initialize counts and percentages vectors
+  counts <- numeric(length(unique_categories))
+  totals <- numeric(length(unique_categories))
+  percentages <- numeric(length(unique_categories))
+  
+  # Calculate counts and percentages
+  for (i in seq_along(unique_categories)) {
+    cat <- unique_categories[i]
+    counts[i] <- nrow(data[data[[categorical_var]] == cat & data[[output_var]] == '1', ])
+    totals[i] <- nrow(data[data[[categorical_var]] == cat, ])
+    if (counts[i] > 0) {
+      percentages[i] <- counts[i] / totals[i]
+    } else {
+      percentages[i] <- 0
+    }
+  }
+  
+
+  # Create a data frame for ggplot
+  plot_data <- data.frame(
+    category = unique_categories,
+    count = counts,
+    percentage = percentages
+  )
+
+  # Create ggplot
+  p <- ggplot(data, aes_string(x=categorical_var, fill=output_var)) +
+    geom_bar(stat="count") +
+    theme_light() +
+    scale_fill_manual(values = c("#678197", "#a2d2df"))
+  
+  # Add text annotations
+  for (i in 1:nrow(plot_data)) {
+  
+    if (!is.na(plot_data$percentage[i])) {
+      p <- p + geom_text(
+        x=i,
+        y = plot_data$count[i] ,  # Adjust the y position as needed
+        label = paste0(round(plot_data$percentage[i] * 100,1), '%'),
+        color = 'white'
+      )
+    }
+  }
+  
+  return(p)
+}
+
+
+```
+
+```{r}
+
+library(gridExtra)
+# Using the function to create plots
+p_sex <- create_bar_plot(data, 'sex', 'output')
+p_cp <- create_bar_plot(data, 'cp', 'output')
+p_fbs <- create_bar_plot(data, 'fbs', 'output')
+p_res <- create_bar_plot(data, 'restecg', 'output')
+p_ex <- create_bar_plot(data, 'exng', 'output')
+p_slp <- create_bar_plot(data, 'slp', 'output')
+p_caa <- create_bar_plot(data, 'caa', 'output')
+p_tha <- create_bar_plot(data, 'thall', 'output')
+
+# Display the plots
+grid.arrange(p_sex, p_cp, p_fbs, p_res, p_ex, p_slp, p_caa,p_tha,ncol = 3)
+
+```
+
+### Modelling
+
+#### Split data
+
+(1) Training data: 85% -\> training model
+
+(2) Validation data: 20% from training data-\> tuning model (not to specify when k-fold CV)
+
+(3) Testing data: 15% -\> evaluation model
+
+Note:
+
+(1) under seed(323)
+
+(2) Testing data us separated from the original data, and validation data is separated from training data.
+
+```{r}
+set.seed(323)
+
+# Shuffle row indices: rows
+rows <- sample(nrow(data))
+
+# Randomly order data: fin.data
+data <- data[rows, ]
+
+# Identify row to split on (85%): split
+split <- round(nrow(data) * .85)
+
+# Create train
+train_data <- data[1:split, ]
+
+# Create val
+test_data <- data[(split + 1):nrow(data), ]
+```
+
+##### Save splitted csv
+
+```{r}
+write.csv(train_data, "train_data.csv", row.names = FALSE)
+write.csv(test_data, "test_data.csv", row.names = FALSE)
+```
+
+#### Logistic Regression
+
+##### Model1: full predictor inputs
+ 
+###### Validation data: 20% of train_data
+
+```{r}
+set.seed(323)
+# Shuffle row indices: rows
+rows <- sample(nrow(train_data))
+
+# Randomly order data: fin.data
+train <- train_data[rows, ]
+
+# Identify row to split 
+split <- round(nrow(train_data) * 0.8)
+
+# Create test
+val <- train[(split + 1):nrow(train), ]
+
+# Create val
+train <- train[1:split, ]
+
+```
+
+```{r}
+# Fit logistic regression model
+model_l <- glm(output ~ ., data = train, family = binomial)
+
+# Summarize the model
+result <- summary(model_l)
+result
+```
+
+```{r}
+# Predict on the training data
+lo_val_pred_prob<- predict(model_l, newdata = val[,-c(14)],type = "response")
+lo_val_pred <- as.factor(ifelse(lo_val_pred_prob > 0.5, 1, 0))
+
+```
+
+```{r}
+actual = factor(val$output)
+conf_matrix <- confusionMatrix(lo_val_pred,actual)
+draw_confusion_matrix(conf_matrix)
+```
+
+
+##### Best subset: select variables
+
+```{r}
+library(leaps)
+best = regsubsets(output~., data, nvmax = 22)
+result <- summary(best)
+```
+
+###### Criterias: Cp, BIC
+
+```{r}
+Cp = result$cp
+BIC = result$bic
+cbind(Cp, BIC)
+```
+
+```{r}
+which.min(Cp)
+which.min(BIC)
+```
+
+```{r}
+par(mfrow = c(1, 2))
+plot(Cp, xlab = "Number of Predictors", ylab = "Cp",
+     type = 'l', lwd = 2)
+points(13, Cp[13], col = "pink", cex = 2, pch = 8, lwd = 2)
+plot(BIC, xlab = "Number of Predictors", ylab = "BIC",
+     type = 'l', lwd = 2)
+points(10, BIC[10], col = "pink", cex = 2, pch = 8, lwd = 2)
+
+```
+
+-   Best 10 variables: sex + cp+ exng +slp +caa +thall
+
+```{r}
+coef(best, 10)
+```
+
+-   Best 13 variables: sex + cp+ + exng + slp + caa + thall + trtbps + thalachh + oldpeak
+
+```{r}
+coef(best, 13)
+```
+
+##### Best Subset with K-fold Cross Validation
+
+Purpose: The testing data is separated from the training data, and the validation data is derived from the training data. This is done to ensure that the testing data is completely independent of the data used to train or tune the models. However, the separation of training and validation data depends on the random seed. Therefore, we use K-fold cross-validation to create different splits of the data based on various random seeds.
+
+```{r, warning = FALSE}
+ library(caret)
+k = 10-5+1
+# define acc matrix
+acc = matrix(NA, nrow = k, ncol = 2, dimnames = list(NULL, c("lr10", "lr13")))
+
+set.seed(323)
+for(i in 1:k){
+   # define training control
+  train_control <- trainControl(method = "cv", number = i+4)
+  
+  # train the model on training set
+  model_10 <- train(output ~ sex+cp+exng+slp+caa+thall,
+                 data = train_data,
+                 trControl = train_control,
+                 method = "glm",
+                 family=binomial())
+  
+  model_13 <- train(output ~ sex + cp+ + exng + slp + caa + thall + trtbps + thalachh + oldpeak,
+                 data = train_data,
+                 trControl = train_control,
+                 method = "glm",
+                 family=binomial())
+  
+  acc[i,] = c( model_10$results$Accuracy, model_13$results$Accuracy)
+}
+
+rownames(acc) <- c("k=5","k=6","k=7","k=8","k=9","k=10")
+acc
+```
+
+$K=5$ and 10 variables perform best.
+
+```{r}
+colMeans(acc)
+```
+
+```{r}
+ls10 <- glm(output ~ sex + cp+ + exng + slp + caa + thall, data = train_data, family = binomial)
+```
+
+So, we choose the logistics regression with 10 variables Actually, it only includes 6 variables.
+
+##### Model2: logistic regression with 10 variables -> choose this model to test
+
+```{r}
+# Fit logistic regression model
+model_2 <- glm(output ~ sex + cp+ + exng + slp + caa + thall, data = train_data, family = binomial)
+
+# Summarize the model
+result <- summary(model_2)
+
+```
+
+```{r}
+# Predict on the training data
+lo_test_pred_prob<- predict(model_2, newdata = test_data[,-c(14)],type = "response")
+lo_test_pred <- as.factor(ifelse(lo_test_pred_prob > 0.5, 1, 0))
+actual <- test_data$output
+
+```
+
+```{r}
+conf_matrix <- confusionMatrix(lo_test_pred,actual)
+draw_confusion_matrix(conf_matrix)
+```
+
+```{r}
+ROC.plot.rv(actual,lo_test_pred_prob)
+```
+
+#### Lasso - k-fold CV
+
+Concepts: panelty term is R1, so it can be 0 -> feature selection
+
+
+```{r}
+
+train_control <- trainControl(method = "cv", number = 5)
+# Define the model formula and data
+model_formula <- output ~ .
+
+# Train the LASSO model with cross-validation
+lasso_model <- train(model_formula,
+                     data = train_data,
+                     method = "glmnet",
+                     trControl = train_control,
+                     tuneGrid = expand.grid(alpha = 1,      # alpha = 1 for LASSO
+                                            lambda = seq(0.001, 0.1, by = 0.001)),  # Specify a range of lambda values to search
+                     family = "binomial")
+plot(lasso_model)
+```
+
+```{r}
+coef(lasso_model$finalModel, lasso_model$bestTune$lambda)
+```
+
+
+
+```{r}
+k = 10-5+1
+# define acc matrix
+acc = matrix(NA, nrow = k, ncol = 2, dimnames = list(c("k=5","k=6","k=7","k=8","k=9","k=10"), c("acc","best_lambda")))
+
+set.seed(323)
+for(i in 1:k){
+   # define training control
+  train_control <- trainControl(method = "cv", number = i+4)
+  
+  model3 <- train(model_formula,
+                     data = train_data,
+                     method = "glmnet",
+                     trControl = train_control,
+                     tuneGrid = expand.grid(alpha = 1,      # alpha = 1 for LASSO
+                                            lambda = seq(0.001, 0.1, by = 0.001)),  # Specify a range of lambda values to search
+                     family = "binomial")
+  
+  
+  acc[i,] = c( max(model3$results$Accuracy), model3$bestTun$lambda)
+}
+
+acc
+```
+
+We choose $\lambda=0.009$
+
+```{r}
+best_lambda <- acc[which.max(acc),2]
+print(best_lambda)
+```
+
+
+```{r}
+library(glmnet)
+X <- as.matrix(train_data[, -which(names(train_data) == "output")])
+y <- train_data$output
+model3 <- glmnet(X, y, alpha = 1, family = "binomial", lambda = best_lambda)  
+```
+
+```{r}
+# Predict on the training data
+# Make predictions (response scale)
+lasso_test_pred_prob <- predict(model3, newx = as.matrix(test_data[,-c(14)]), s = best_lambda, type = "response")
+lasso_test_pred <- as.factor(ifelse(lo_test_pred_prob > 0.5, 1, 0))
+actual <- test_data$output
+
+```
+
+```{r}
+conf_matrix <- confusionMatrix(lasso_test_pred,actual)
+draw_confusion_matrix(conf_matrix)
+```
+
+```{r}
+ROC.plot.rv(actual,lasso_test_pred_prob)
+```
+
+```{r}
+coef(lasso_model$finalModel, lasso_model$bestTune$lambda)
+```
+
+
+#### PCA -FAMD
+
+Reference: <https://arrow.tudublin.ie/cgi/viewcontent.cgi?article=1227&context=scschcomdis>
+
+
+Feature selcetion: with 13 variables(one hot encoded) as in Best Subset, but actually with 9 variables
+
+output ~ sex + cp+ + exng + slp + caa + thall + trtbps + thalachh + oldpeak
+
+```{r}
+library("FactoMineR")
+library("factoextra")
+# the percentages of inertia explained by each FAMD dimensions
+train.famd <- FAMD(train_data[,c(2,3,4,8,9,10,11,12,13)], graph = FALSE)
+
+```
+
+```{r}
+eig.train <- get_eigenvalue(train.famd)
+head(eig.train,10)
+```
+
+We only have 5 dimension, that $41.98%$ of explained variances.
+
+```{r}
+par(mfrow=c(2,2))
+fviz_screeplot(train.famd)
+# Plot of variables
+fviz_famd_var(train.famd, repel = TRUE)
+# Contribution to the first dimension
+fviz_contrib(train.famd, "var", axes = 1)
+# Contribution to the second dimension
+fviz_contrib(train.famd, "var", axes = 2)
+```
+
+```{r}
+library(plotly)
+plot.train.famd <-as.data.frame(train.famd$ind)
+x <- cbind(train_data, plot.train.famd[1:3])
+## Plot
+plot_ly(x, 
+        x = ~coord.Dim.1, 
+        y = ~coord.Dim.2, 
+        z = ~coord.Dim.3, 
+        color = ~output,
+        marker = list(size = 7)) 
+```
+
+```{r}
+# Extract train FAMD dimensions/components
+train_famd_dimensions <- as.data.frame(train.famd$ind$coord)
+# Combine train FAMD components with outcome variable
+train_famd_data <- cbind(train_famd_dimensions, output = train_data$output)
+```
+
+```{r}
+# Extract test FAMD dimensions/components
+test_famd_dimensions <- as.data.frame(predict(train.famd,test_data[,-c(14)])$coord)
+# Combine test FAMD components with outcome variable
+test_famd_data <- cbind(test_famd_dimensions, output = test_data$output)
+colnames(test_famd_data)<- c("Dim.1", "Dim.2", "Dim.3", "Dim.4", "Dim.5", "output")
+```
+
+```{r}
+model_pca_glm <- glm(output ~ ., data = train_famd_data, family = "binomial")
+summary(model_pca_glm)
+```
+
+```{r}
+famd_test_pre_prob <- predict(model_pca_glm, test_famd_data, type = "response")
+famd_test_pre <- as.factor(ifelse(famd_test_pre_prob > 0.5, 1, 0))
+actual <- test_data$output
+```
+
+```{r}
+conf_matrix <- confusionMatrix(famd_test_pre,actual)
+draw_confusion_matrix(conf_matrix)
+
+```
+
+```{r}
+ROC.plot.rv(actual,famd_test_pre_prob)
+
+```
+
+#### Tree
+
+
+```{r}
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(rattle)
+set.seed(323)
+tree <- rpart(output ~., data = train, method ='class', cp = 0.002)
+fancyRpartPlot(tree)
+printcp(tree)
+
+```
+
+```{r}
+tree$variable.importance
+```
+
+```{r}
+tree.pred <- predict(tree, val[,-c(14)], type = "class")
+tree.pred.prob <- predict(tree, val[,-c(14)], type = "prob")[,2]
+actual <- val$output
+```
+
+```{r}
+conf_matrix <- confusionMatrix(tree.pred,actual)
+draw_confusion_matrix(conf_matrix)
+```
+
+##### test cp
+
+```{r}
+cp <- seq(0.0001, 0.05, 0.001)
+acc <-rep(0, length(cp))
+set.seed(323)
+for (i in 1:50){
+  tree <- rpart(output ~., data = train_data, method ='class', cp = cp[i])
+  tree.pred <- predict(tree, val[,-c(14)], type = "class")
+  tree.pred.prob <- predict(tree, val[,-c(14)], type = "prob")[,2]
+  actual <- val$output
+  acc[i] <- sum(actual == tree.pred)/length(actual)
+}
+
+
+
+```
+
+```{r}
+acc_tree = data.frame(cp, acc)
+ggplot(acc_tree,aes(cp, acc)) +
+  geom_line() +
+  theme_light()
+```
+
+Choose $cp \leq0.04$
+
+##### important variable
+
+```{r}
+df <- data.frame(imp = tree$variable.importance)
+df2 <- df %>% 
+  tibble::rownames_to_column() %>% 
+  dplyr::rename("variable" = rowname) %>% 
+  dplyr::arrange(imp) %>%
+  dplyr::mutate(variable = forcats::fct_inorder(variable))
+
+ggplot2::ggplot(df2) +
+  geom_segment(aes(x = variable, y = 0, xend = variable, yend = imp), 
+               size = 1.5, alpha = 0.7) +
+  geom_point(aes(x = variable, y = imp, col = variable), 
+             size = 1, show.legend = F) +
+  coord_flip() +
+  ylab("Importance")+
+  xlab("Feature")+
+  theme_bw()
+
+```
+
+##### testing
+
+```{r}
+tree.test.pred.prob <- predict(tree, test_data[,-c(14)], type = "prob")[,2]
+tree.test.pred <- as.factor(ifelse(tree.test.pred.prob > 0.5, 1, 0))
+
+actual <- test_data$output
+
+conf_matrix <- confusionMatrix(tree.test.pred,actual)
+draw_confusion_matrix(conf_matrix)
+```
+
+##### ROC
+
+```{r}
+ROC.plot.rv(actuals =actual, predictedScores = tree.test.pred.prob)
+```
+
+#### Random forests
+
+```{r}
+library(randomForest)
+```
+
+```{r}
+set.seed(323)
+rf <- randomForest(output ~ ., data = train, mtry=5, ntree=1000)
+rf.pred <- predict(rf, val[,-c(14)], predict.all=TRUE)
+```
+
+```{r}
+err_by_tree = sapply(1:ncol(rf.pred$individual),function(i){
+apply(rf.pred$individual[,1:i,drop=FALSE],1,
+function(i)with(rle(i),values[which.max(lengths)]))
+})
+
+err_by_tree = colMeans(err_by_tree!=val$output)
+```
+
+```{r}
+plot(rf$err.rate[,1],type="l",col="steelblue",xlab="ntrees",ylab="err.rate",
+    ylim=c(0,0.5))
+    lines(err_by_tree,col="orange")
+    legend("topright",fill=c("steelblue","orange"),c("val","OOB.train"))
+```
+
+```{r}
+set.seed(323)
+rf.pred.prob <- predict(rf, val[,-c(14)], type = "prob")[,2]
+rf.pred <- as.factor(ifelse(rf.pred.prob > 0.5, 1, 0))
+
+actual <- val$output
+
+conf_matrix <- confusionMatrix(rf.pred,actual)
+draw_confusion_matrix(conf_matrix)
+```
+
+##### Tuning
+
+```{r, warning=FALSE, message=FALSE}
+library(pROC)
+m <- seq(1, 50, 1)
+auc <-rep(0, length(m))
+set.seed(323)
+for (i in 1:50){
+  rf <- randomForest(output ~ ., data = train, mtry=m[i], ntree=1000)
+  rf.pred <- predict(rf, val[,-c(14)], type = "class")
+  rf.pred.prob <- predict(rf, val[,-c(14)], type = "prob")[,2]
+  actual <- val$output
+  roc<-roc(actual,rf.pred.prob)
+  auc[i] <-   auc(roc)
+}
+
+```
+
+```{r}
+auc_rf = data.frame(m, auc)
+ggplot(auc_rf,aes(m, auc)) +
+  geom_line() +
+  theme_light()
+```
+
+##### Testing
+
+Choose $m =9$
+
+```{r}
+set.seed(323)
+rf <- randomForest(output ~ ., data = train_data, mtry=9, ntree=1000)
+rf.pred.prob <- predict(rf, test_data[,-c(14)], type = "prob")[,2]
+rf.pred <- as.factor(ifelse(rf.pred.prob > 0.5, 1, 0))
+actual <- test_data$output
+```
+
+```{r}
+conf_matrix <- confusionMatrix(rf.pred,actual)
+draw_confusion_matrix(conf_matrix)
+ROC.plot.rv(actuals = test_data$output, predictedScores = rf.pred.prob)
+```
+
+#### XGBoost
+
+Scaling 
+
+```{r}
+train_scaled = cbind(train_data[,-c(14)]%>%mutate_if(is.numeric,scale), output = train_data$output)
+test_scaled = cbind(test_data[,-c(14)]%>%mutate_if(is.numeric,scale), output = test_data$output)
+```
+
+One-hot encode
+
+```{r}
+library(xgboost)   # for fitting the xgboost model
+library(e1071)
+require(Matrix)
+library(caret)
+sparse_matrix_train <- sparse.model.matrix(output ~ ., data = train_scaled)[,-1]
+sparse_matrix_test <- sparse.model.matrix(output ~ ., data = test_scaled)[,-1]
+train_output <- as.numeric(train_data$output)-1
+test_output <- as.numeric(test_data$output)-1
+```
+
+```{r}
+# Define parameters for xgboost
+params <- list(
+  objective = "binary:logistic",
+  eval_metric = "auc",
+  max_depth = 6,
+  eta = 0.3,
+  nthread = 2
+)
+
+bst <- xgboost::xgboost(data = sparse_matrix_train, label = train_output, max_depth = 4,
+               eta = 1, nthread = 2, nrounds = 10,objective = "binary:logistic")
+
+```
+
+```{r}
+importance <- xgb.importance(feature_names = colnames(sparse_matrix_train), model = bst)
+head(importance)
+```
+
+- Gain is the improvement in accuracy brought by a feature to the branches it is on
+
+- Cover measures the relative quantity of observations concerned by a feature
+
+- Frequency is a simpler way to measure the Gain. It just counts the number of times a feature is used in all generated trees.
+
+```{r}
+xgb.plot.importance(importance_matrix = importance)
+```
+
+
+```{r}
+# generate predictions for our held-out testing data
+xg_pred_prob <- predict(bst, sparse_matrix_test)
+xg.pred <- as.factor(ifelse(xg_pred_prob > 0.5, 1, 0))
+conf_matrix <- confusionMatrix(xg.pred,as.factor(test_data$output))
+draw_confusion_matrix(conf_matrix)
+```
+
+```{r}
+# Define hyperparameters
+params <- list(
+  objective = "multi:softmax",
+  num_class = 3,
+  eval_metric = "mlogloss",
+  max_depth = 6,
+  eta = 0.3,
+  gamma = 0,
+  subsample = 1,
+  colsample_bytree = 1
+)
+# Cross-validation to find the best number of rounds
+cv <- xgb.cv(params = params, data = sparse_matrix_train,label = train_output, nrounds = 100, 
+             nfold = 5, showsd = TRUE, stratified = TRUE, 
+             print_every_n = 10, early_stopping_rounds = 10)
+
+best_nrounds <- cv$best_iteration
+
+# Train the model
+model <- xgboost::xgboost(params = params, data = sparse_matrix_train,label = train_output, nrounds = best_nrounds)
+
+```
+
+
+```{r}
+# generate predictions for our held-out testing data
+xg_pred_prob <- predict(model, sparse_matrix_test)
+xg.pred <- as.factor(ifelse(xg_pred_prob > 0.5, 1, 0))
+conf_matrix <- confusionMatrix(xg.pred,as.factor(test_data$output))
+draw_confusion_matrix(conf_matrix)
+```
+
+```{r}
+ROC.plot.rv(actuals = test_data$output, predictedScores = xg_pred_prob)
+```
+
+
+Better, but still overfitting.
+
+- Conclusion: It's well-known that a tree(/forest) algorithm (xgboost/rpart/etc.) will generally 'prefer' continuous variables over binary categorical ones in its variable selection, since it can choose the continuous split-point wherever it wants to maximize the information gain
+
+#### Knn
+
+```{r}
+library(dplyr)
+library(class)
+# Initialize variables
+l <- list()
+maxi <- 0
+ind <- 0
+best <- 0
+best_predict <- NULL
+train_scaled = train_data[,-c(14)]%>%mutate_if(is.numeric,scale)
+test_scaled = test_data[,-c(14)]%>%mutate_if(is.numeric,scale)
+# Loop over a range of k values
+for (i in 4:40) {
+  # Train KNN model
+  predict <- knn(train =train_scaled, test = test_scaled, cl = train_data$output, k = i)
+  
+  # Calculate accuracy
+  acu <- sum(predict == test_data$output) / length(test_data$output)
+  
+  # Append accuracy to list
+  l[[i]] <- acu
+  
+  # Check for the best model
+  if (maxi < acu) {
+    maxi <- acu
+    ind <- i
+    best <- acu
+    best_predict <- predict
+  }
+}
+
+# Print the best k and its accuracy
+cat("Best k:", ind, "\n")
+cat("Best auc:", best, "\n")
+```
+
+
+
+```{r}
+knn_pre <- knn(train = train_scaled, test = test_scaled, cl = train_data$output, k = 14, prob = TRUE)
+knn_pre_prob <-  attr(knn_pre, "prob")
+conf_matrix <- confusionMatrix(knn_pre,as.factor(test_data$output))
+draw_confusion_matrix(conf_matrix)
+```
+#### Neural Network
+
+```{r}
+library(readr)
+nn.pred.prob <- read_csv("pred.csv", col_names = FALSE)
+```
+
+```{r}
+ROC.plot.rv(actuals = test_data$output, predictedScores = nn.pred.prob$X1)
+```
+
+
+```{r}
+nn.pred.prob$X1[which(nn.pred.prob$X1 > 0.5)] = "1"
+nn.pred.prob$X1[which(nn.pred.prob$X1 <= 0.5)] = "0"
+nn.pred.prob$X1 <- as.factor(nn.pred.prob$X1)
+nn.pred <- nn.pred.prob$X1
+actual <- test_data$output
+library(pROC)
+conf_matrix <- confusionMatrix(nn.pred,actual)
+draw_confusion_matrix(conf_matrix)
+```
